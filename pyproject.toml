@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesmer_segment"
+version = "0.0.1"
+requires-python = "<=3.10"
+dependencies = [
+    "typer",
+    "deepcell",
+    "tifffile",
+    "xarray"
+]
+
+[project.scripts]
+mesmer-segment = "mesmer_segment:app"
