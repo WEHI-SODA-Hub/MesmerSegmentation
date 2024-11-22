@@ -1,11 +1,12 @@
-from deepcell.applications import Mesmer
 import typer
 from pathlib import Path
-from tifffile import TiffFile
+from tifffile import TiffFile, imwrite
 from xarray import DataArray
 import json
+from typing import Annotated
+from numpy.typing import NDArray
+import sys
 
-mesmer = Mesmer()
 app = typer.Typer()
 MISSING = object()
 
@@ -28,14 +29,29 @@ def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
 
     return DataArray(data=channels, dims=["C", "Y", "X"], coords={"C": channel_names}, attrs=attrs)
 
-
-@app.command()
+@app.command(help="Segments a MIBI TIFF using Mesmer, and prints the result to stdout.")
 def main(
-    mibi_tiff: Path
+    mibi_tiff: Annotated[Path, typer.Argument(help="Path to the MIBI TIFF input file")],
+    nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
+    membrane_channel: Annotated[str, typer.Option(help="Name of the membrane channel")]
 ):
+    from deepcell.applications import Mesmer
     tiff = TiffFile(mibi_tiff)
     array = mibi_tiff_to_xarray(tiff)
 
+    # Mesmer assumes the input is:
+    # A 4D array with dimensions (batch, x, y, channel)
+    # There must be exactly 2 channels, and they have to correspond to nuclear and channel markers respectively
+    np_array = array.sel(
+        C=[nuclear_channel, membrane_channel]
+    ).expand_dims(
+        "batch"
+    ).transpose(
+        "batch", "X", "Y", "C"
+    ).to_numpy()
+
     app = Mesmer()
     mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
-    segmentation_predictions = app.predict(array, image_mpp=mpp, compartment="whole-cell")
+    # The result is a 4D array, but the first and last dimensions are both 1
+    segmentation_predictions: NDArray = app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze()
+    imwrite(sys.stdout.buffer, segmentation_predictions)
