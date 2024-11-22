@@ -13,18 +13,24 @@ Don't forget to obtain and `export` an API key!
 ```
  Usage: mesmer-segment [OPTIONS] MIBI_TIFF                                                                                                                                           
                                                                                                                                                                                      
- Segments a MIBI TIFF using Mesmer, and prints the result to stdout.                                                                                                                 
+ Segments a MIBI TIFF using Mesmer, and prints the result to stdout. Note that you will need a DeepCell API key as explained here.                                                   
                                                                                                                                                                                      
 ╭─ Arguments ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ *    mibi_tiff      PATH  Path to the MIBI TIFF input file [default: None] [required]                                                                                             │
+│ *    mibi_tiff      PATH  Path to the MIBI TIFF input file                                                                                                                        │
+│                           [default: None]                                                                                                                                         │
+│                           [required]                                                                                                                                              │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --nuclear-channel           TEXT  Name of the nuclear channel [default: None] [required]                                                                                       │
-│ *  --membrane-channel          TEXT  Name of the membrane channel [default: None] [required]                                                                                      │
+│ *  --nuclear-channel           TEXT  Name of the nuclear channel                                                                                                                  │
+│                                      [default: None]                                                                                                                              │
+│                                      [required]                                                                                                                                   │
+│ *  --membrane-channel          TEXT  Name of the membrane channel                                                                                                                 │
+│                                      [default: None]                                                                                                                              │
+│                                      [required]                                                                                                                                   │
 │    --install-completion              Install completion for the current shell.                                                                                                    │
 │    --show-completion                 Show completion for the current shell, to copy it or customize the installation.                                                             │
 │    --help                            Show this message and exit.                                                                                                                  │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╰─────
 ```
 
 A typical usage example is:
