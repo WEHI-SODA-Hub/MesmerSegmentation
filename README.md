@@ -8,6 +8,8 @@ Install this repo. You can do so using `pip install git+https://github.com/WEHI-
 
 ## CLI Usage
 
+Don't forget to obtain and `export` an API key!
+
 ```
  Usage: mesmer-segment [OPTIONS] MIBI_TIFF                                                                                                                                           
                                                                                                                                                                                      

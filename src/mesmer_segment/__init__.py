@@ -7,7 +7,7 @@ from typing import Annotated
 from numpy.typing import NDArray
 import sys
 
-app = typer.Typer()
+app = typer.Typer(rich_markup_mode="markdown")
 MISSING = object()
 
 def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
@@ -29,7 +29,7 @@ def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
 
     return DataArray(data=channels, dims=["C", "Y", "X"], coords={"C": channel_names}, attrs=attrs)
 
-@app.command(help="Segments a MIBI TIFF using Mesmer, and prints the result to stdout.")
+@app.command(help="Segments a MIBI TIFF using Mesmer, and prints the result to stdout. Note that you will need to obtain and export a DeepCell API key as explained [here](https://deepcell.readthedocs.io/en/master/API-key.html).")
 def main(
     mibi_tiff: Annotated[Path, typer.Argument(help="Path to the MIBI TIFF input file")],
     nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
