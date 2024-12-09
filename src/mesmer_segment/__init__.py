@@ -79,5 +79,8 @@ def main(
     app = Mesmer()
     mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
     # The result is a 4D array, but the first and last dimensions are both 1
-    segmentation_predictions: NDArray = app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze()
-    imwrite(sys.stdout.buffer, segmentation_predictions)
+    segmentation_predictions: NDArray = app.predict(np_array, image_mpp=mpp, compartment="whole-cell")
+    rgb_images = create_rgb_image(np_array, channel_colors=['green', 'blue'])
+    overlay = make_outline_overlay(rgb_data=rgb_images, predictions=segmentation_predictions)
+
+    imwrite(sys.stdout.buffer, overlay)
