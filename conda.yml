@@ -1,0 +1,16 @@
+name: mibisegmentation
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python =3.10.0
+  - tifffile
+  - typer
+  - xarray
+  - git
+  - gcc
+  - pip
+  - pip:
+    - tensorflow-cpu
+    - deepcell
+    - git+https://github.com/WEHI-SODA-Hub/MibiSegmentation.git
