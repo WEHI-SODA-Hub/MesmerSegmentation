@@ -27,7 +27,7 @@ def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
         attrs["frame_size"] = description["raw_description"]["frameSize"]
         channels.append(page.asarray())
 
-    return DataArray(data=channels, dims=["C", "Y", "X"], coords={"C": channel_names}, attrs=attrs)
+    return DataArray(data=channels, dims=["C", "X", "Y"], coords={"C": channel_names}, attrs=attrs)
 
 
 def combine_channels(array: DataArray, channels: List[str], combined_name: str) -> DataArray:
