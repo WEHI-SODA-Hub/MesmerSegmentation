@@ -1,11 +1,16 @@
-import typer
-from pathlib import Path
-from tifffile import TiffFile, imwrite
-from xarray import DataArray, concat
 import json
-from typing import Annotated, List
-from numpy.typing import NDArray
 import sys
+from io import BytesIO
+from pathlib import Path
+from typing import Annotated, List
+
+import geopandas as gpd
+import numpy as np
+import rasterio.features
+import typer
+from numpy.typing import NDArray
+from tifffile import TiffFile
+from xarray import DataArray, concat
 
 app = typer.Typer(rich_markup_mode="markdown")
 MISSING = object()
@@ -13,7 +18,7 @@ MISSING = object()
 def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
     """
     Takes a MIBI TIFF and converts it to an xarray with relevant axis, coordinate and metadata attached.
-    Note: won't work with a regular TIFF as this depends on MIBI specific metadata
+    Note: won"t work with a regular TIFF as this depends on MIBI specific metadata
     """
     channel_names: list[str] = []
     attrs: dict[str, int] = {}
@@ -51,6 +56,36 @@ def combine_channels(array: DataArray, channels: List[str], combined_name: str) 
 
     return concat([array, combined], dim="C")
 
+def labels_to_features(lab: np.ndarray, object_type="annotation", connectivity: int=4,
+                      mask=None, classification=None):
+    """
+    Create a GeoJSON FeatureCollection from a labeled image.
+    """
+    features = []
+
+    # Ensure types are valid
+    if lab.dtype == bool:
+        mask = lab
+        lab = lab.astype(np.uint8)
+    else:
+        mask = lab > 0
+
+    # Trace geometries
+    for s in rasterio.features.shapes(lab, mask=mask, connectivity=connectivity):
+        # Create properties
+        props = dict(object_type=object_type)
+
+        # Just to show how a classification can be added
+        if classification is not None:
+            props["classification"] = classification
+
+        # Wrap in a dict to effectively create a GeoJSON Feature
+        po = dict(type="Feature", geometry=s[0], properties=props)
+
+        features.append(po)
+
+    return features
+
 @app.command(help="Segments a MIBI TIFF using Mesmer, and prints the result to stdout. Note that you will need to obtain and export a DeepCell API key as explained [here](https://deepcell.readthedocs.io/en/master/API-key.html).")
 def main(
     mibi_tiff: Annotated[Path, typer.Argument(help="Path to the MIBI TIFF input file")],
@@ -58,7 +93,6 @@ def main(
     membrane_channel: Annotated[List[str], typer.Option(help="Name(s) of the membrane channels (can be repeated)")],
 ):
     from deepcell.applications import Mesmer
-    from deepcell.utils.plot_utils import create_rgb_image, make_outline_overlay
 
     tiff = TiffFile(mibi_tiff)
     array = mibi_tiff_to_xarray(tiff)
@@ -79,6 +113,20 @@ def main(
     app = Mesmer()
     mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
     # The result is a 4D array, but the first and last dimensions are both 1
-    segmentation_predictions: NDArray = app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze().astype("uint16")
+    segmentation_predictions: NDArray = app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze().astype("int32")
 
-    imwrite(sys.stdout.buffer, segmentation_predictions)
+    features = labels_to_features(segmentation_predictions, object_type="annotation")
+
+    # Extract the geometries and properties of each feature
+    geoms = []
+    for feature in features:
+        geoms.append(feature["geometry"])
+
+    # Create a geopandas dataframe from the geometries and properties
+    gdf = gpd.GeoDataFrame.from_features(features)
+
+    # Write the geopandas dataframe to a GeoJSON file
+    with BytesIO() as buffer:
+        gdf.to_file(buffer, driver="GeoJSON")
+        buffer.seek(0)
+        sys.stdout.buffer.write(buffer.read())
