@@ -1,5 +1,6 @@
 import json
 import sys
+from enum import Enum
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated, List
@@ -14,6 +15,12 @@ from xarray import DataArray, concat
 
 app = typer.Typer(rich_markup_mode="markdown")
 MISSING = object()
+
+
+class CombineMethod(str, Enum):
+    MAX = "max"
+    PROD = "prod"
+
 
 def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
     """
@@ -35,7 +42,7 @@ def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
     return DataArray(data=channels, dims=["C", "X", "Y"], coords={"C": channel_names}, attrs=attrs)
 
 
-def combine_channels(array: DataArray, channels: List[str], combined_name: str) -> DataArray:
+def combine_channels(array: DataArray, channels: List[str], combined_name: str, combine_method: CombineMethod) -> DataArray:
     """
     Combines multiple channels into a single channel by taking the maximum value at each pixel.
     Adds the combined channel to the array.
@@ -44,17 +51,17 @@ def combine_channels(array: DataArray, channels: List[str], combined_name: str) 
     if len(channels) == 1:
         return array
 
-    combined = array.sel(
-        C=channels
-    ).max(
-        dim="C"
-    ).expand_dims(
-        "C"
-    ).assign_coords(
-        C=[combined_name]
-    )
+    combined = array.sel(C=channels)
+
+    if combine_method == CombineMethod.MAX:
+        combined = combined.max(dim="C")
+    elif combine_method == CombineMethod.PROD:
+        combined = combined.prod(dim="C")
+    
+    combined = combined.expand_dims("C").assign_coords(C=[combined_name])
 
     return concat([array, combined], dim="C")
+
 
 def labels_to_features(lab: np.ndarray, object_type="annotation", connectivity: int=4,
                       mask=None, classification=None):
@@ -91,12 +98,13 @@ def main(
     mibi_tiff: Annotated[Path, typer.Argument(help="Path to the MIBI TIFF input file")],
     nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
     membrane_channel: Annotated[List[str], typer.Option(help="Name(s) of the membrane channels (can be repeated)")],
+    combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (max or prod)")],
 ):
     from deepcell.applications import Mesmer
 
     tiff = TiffFile(mibi_tiff)
     array = mibi_tiff_to_xarray(tiff)
-    array = combine_channels(array, membrane_channel, "combined_membrane")
+    array = combine_channels(array, membrane_channel, "combined_membrane", CombineMethod(combine_method))
 
     # Mesmer assumes the input is:
     # A 4D array with dimensions (batch, x, y, channel)
