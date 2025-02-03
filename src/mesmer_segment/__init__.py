@@ -12,14 +12,16 @@ import typer
 from numpy.typing import NDArray
 from tifffile import TiffFile
 from xarray import DataArray, concat
+from deepcell.applications import Mesmer
+from skimage.segmentation import clear_border
 
 app = typer.Typer(rich_markup_mode="markdown")
 MISSING = object()
 
 
 class CombineMethod(str, Enum):
-    MAX = "max"
     PROD = "prod"
+    MAX = "max"
 
 
 def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
@@ -63,6 +65,28 @@ def combine_channels(array: DataArray, channels: List[str], combined_name: str, 
     return concat([array, combined], dim="C")
 
 
+def get_segmentation_prediction(array: DataArray, nuclear_channel: str, membrane_channel: List[str]) -> NDArray:
+    """
+    Segments the input array using Mesmer.
+    Mesmer assumes the input is a 4D array with dimensions (batch, x, y, channel).
+    There must be exactly 2 channels, and they have to correspond to nuclear and channel markers respectively
+    """
+    combined_membrane_channel = "combined_membrane" if len(membrane_channel) > 1 else membrane_channel[0]
+    np_array = array.sel(
+        C=[nuclear_channel, combined_membrane_channel]
+    ).expand_dims(
+        "batch"
+    ).transpose(
+        "batch", "X", "Y", "C"
+    ).to_numpy()
+
+    app = Mesmer()
+    mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
+
+    # The result is a 4D array, but the first and last dimensions are both 1
+    return app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze().astype("int32")
+
+
 def labels_to_features(lab: np.ndarray, object_type="annotation", connectivity: int=4,
                       mask=None, classification=None):
     """
@@ -98,30 +122,18 @@ def main(
     mibi_tiff: Annotated[Path, typer.Argument(help="Path to the MIBI TIFF input file")],
     nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
     membrane_channel: Annotated[List[str], typer.Option(help="Name(s) of the membrane channels (can be repeated)")],
-    combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (max or prod)")],
+    combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (prod or max)")] = CombineMethod.PROD,
+    remove_cells_touching_border: Annotated[bool, typer.Option(help="Whether to remove cells touching the border of the image")] = True,
 ):
-    from deepcell.applications import Mesmer
 
     tiff = TiffFile(mibi_tiff)
     array = mibi_tiff_to_xarray(tiff)
     array = combine_channels(array, membrane_channel, "combined_membrane", CombineMethod(combine_method))
 
-    # Mesmer assumes the input is:
-    # A 4D array with dimensions (batch, x, y, channel)
-    # There must be exactly 2 channels, and they have to correspond to nuclear and channel markers respectively
-    combined_membrane_channel = "combined_membrane" if len(membrane_channel) > 1 else membrane_channel[0]
-    np_array = array.sel(
-        C=[nuclear_channel, combined_membrane_channel]
-    ).expand_dims(
-        "batch"
-    ).transpose(
-        "batch", "X", "Y", "C"
-    ).to_numpy()
+    segmentation_predictions = get_segmentation_prediction(array, nuclear_channel, ["combined_membrane"])
 
-    app = Mesmer()
-    mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
-    # The result is a 4D array, but the first and last dimensions are both 1
-    segmentation_predictions: NDArray = app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze().astype("int32")
+    if remove_cells_touching_border:
+        segmentation_predictions = clear_border(segmentation_predictions)
 
     features = labels_to_features(segmentation_predictions, object_type="annotation")
 
