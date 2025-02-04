@@ -65,7 +65,22 @@ def combine_channels(array: DataArray, channels: List[str], combined_name: str, 
     return concat([array, combined], dim="C")
 
 
-def get_segmentation_prediction(array: DataArray, nuclear_channel: str, membrane_channel: List[str]) -> NDArray:
+def calculate_maxima_threshold(segmentation_level: int) -> float:
+    """
+    Calculate maxima threshold based on code used by MIBIextension tool
+    This uses a linear function to scale maxima_threshold based on segmentation level input.
+    Keeping this for compatibility, but the logic of this calculation is not clear and should
+    be re-evaluated.
+    """
+    if segmentation_level < 5:
+        subtractive_factor = 0.0002 * segmentation_level
+    else:
+        subtractive_factor = 0.2 * (0.9 - 0.001) * segmentation_level + 2 * 0.001 - 0.9
+
+    return 0.1 - 0.1 * subtractive_factor
+
+
+def get_segmentation_prediction(array: DataArray, nuclear_channel: str, membrane_channel: List[str], segmentation_level: int, pixel_expansion: int) -> NDArray:
     """
     Segments the input array using Mesmer.
     Mesmer assumes the input is a 4D array with dimensions (batch, x, y, channel).
@@ -83,8 +98,22 @@ def get_segmentation_prediction(array: DataArray, nuclear_channel: str, membrane
     app = Mesmer()
     mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
 
+    # Set compartment to nuclear if using pixel expansion
+    compartment = "nuclear" if pixel_expansion > 0 else "whole-cell"
+    maxima_threshold = calculate_maxima_threshold(segmentation_level)
+    
+    kwargs_nuclear={'pixel_expansion': pixel_expansion,
+                    'maxima_threshold': maxima_threshold}
+    kwargs_whole_cell={'maxima_threshold': maxima_threshold}
+
     # The result is a 4D array, but the first and last dimensions are both 1
-    return app.predict(np_array, image_mpp=mpp, compartment="whole-cell").squeeze().astype("int32")
+    return app.predict(
+        np_array,
+        image_mpp=mpp,
+        compartment=compartment,
+        postprocess_kwargs_nuclear=kwargs_nuclear,
+        postprocess_kwargs_whole_cell=kwargs_whole_cell
+    ).squeeze().astype("int32")
 
 
 def labels_to_features(lab: np.ndarray, object_type="annotation", connectivity: int=4,
@@ -123,14 +152,20 @@ def main(
     nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
     membrane_channel: Annotated[List[str], typer.Option(help="Name(s) of the membrane channels (can be repeated)")],
     combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (prod or max)")] = CombineMethod.PROD,
+    segmentation_level: Annotated[int, typer.Option(help="Segmentation level between 0-10 where 0 is less segmentation and 10 is more")] = 5,
     remove_cells_touching_border: Annotated[bool, typer.Option(help="Whether to remove cells touching the border of the image")] = True,
+    pixel_expansion: Annotated[int, typer.Option(help="Specify a manual pixel expansion after segmentation. NOTE: This will perform segmentation in nuclear mode only.")] = 0,
 ):
 
     tiff = TiffFile(mibi_tiff)
     array = mibi_tiff_to_xarray(tiff)
     array = combine_channels(array, membrane_channel, "combined_membrane", CombineMethod(combine_method))
 
-    segmentation_predictions = get_segmentation_prediction(array, nuclear_channel, ["combined_membrane"])
+    if segmentation_level < 0 or segmentation_level > 10:
+        raise ValueError("Segmentation level must be between 0 and 10")
+
+    segmentation_predictions = get_segmentation_prediction(array, nuclear_channel, membrane_channel,
+                                                           segmentation_level, pixel_expansion)
 
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
