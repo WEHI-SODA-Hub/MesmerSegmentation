@@ -80,7 +80,7 @@ def calculate_maxima_threshold(segmentation_level: int) -> float:
     return 0.1 - 0.1 * subtractive_factor
 
 
-def get_segmentation_prediction(array: DataArray, nuclear_channel: str, membrane_channel: List[str], segmentation_level: int, pixel_expansion: int) -> NDArray:
+def get_segmentation_predictions(array: DataArray, nuclear_channel: str, membrane_channel: List[str], kwargs_nuclear: dict[str, float], kwargs_whole_cell: dict[str, float]) -> NDArray:
     """
     Segments the input array using Mesmer.
     Mesmer assumes the input is a 4D array with dimensions (batch, x, y, channel).
@@ -99,12 +99,8 @@ def get_segmentation_prediction(array: DataArray, nuclear_channel: str, membrane
     mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
 
     # Set compartment to nuclear if using pixel expansion
-    compartment = "nuclear" if pixel_expansion > 0 else "whole-cell"
-    maxima_threshold = calculate_maxima_threshold(segmentation_level)
-    
-    kwargs_nuclear={'pixel_expansion': pixel_expansion,
-                    'maxima_threshold': maxima_threshold}
-    kwargs_whole_cell={'maxima_threshold': maxima_threshold}
+    assert 'pixel_expansion' in kwargs_nuclear, "pixel_expansion must be specified in kwargs_nuclear"
+    compartment = "nuclear" if kwargs_nuclear['pixel_expansion'] > 0 else "whole-cell"
 
     # The result is a 4D array, but the first and last dimensions are both 1
     return app.predict(
@@ -152,7 +148,8 @@ def main(
     nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
     membrane_channel: Annotated[List[str], typer.Option(help="Name(s) of the membrane channels (can be repeated)")],
     combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (prod or max)")] = CombineMethod.PROD,
-    segmentation_level: Annotated[int, typer.Option(help="Segmentation level between 0-10 where 0 is less segmentation and 10 is more")] = 5,
+    segmentation_level: Annotated[int, typer.Option(help="Segmentation level between 0-10 where 0 is less segmentation and 10 is more", min=0, max=10)] = 5,
+    interior_threshold: Annotated[float, typer.Option(help="Controls how conservative model is in distinguishing cell from background (lower values = larger cells, higher values = smaller cells)")] = 0.3,
     remove_cells_touching_border: Annotated[bool, typer.Option(help="Whether to remove cells touching the border of the image")] = True,
     pixel_expansion: Annotated[int, typer.Option(help="Specify a manual pixel expansion after segmentation. NOTE: This will perform segmentation in nuclear mode only.")] = 0,
 ):
@@ -161,15 +158,21 @@ def main(
     array = mibi_tiff_to_xarray(tiff)
     array = combine_channels(array, membrane_channel, "combined_membrane", CombineMethod(combine_method))
 
-    if segmentation_level < 0 or segmentation_level > 10:
-        raise ValueError("Segmentation level must be between 0 and 10")
+    # Collate args and run segmentation
+    maxima_threshold = calculate_maxima_threshold(segmentation_level)
+    kwargs_nuclear = {'pixel_expansion': pixel_expansion,
+                      'maxima_threshold': maxima_threshold,
+                      'interior_threshold': interior_threshold}
+    kwargs_whole_cell = {'maxima_threshold': maxima_threshold,
+                         'interior_threshold': interior_threshold}
+    segmentation_predictions = get_segmentation_predictions(array, nuclear_channel, membrane_channel,
+                                                            kwargs_nuclear, kwargs_whole_cell)
 
-    segmentation_predictions = get_segmentation_prediction(array, nuclear_channel, membrane_channel,
-                                                           segmentation_level, pixel_expansion)
-
+    # Post processing functions
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
 
+    # Convert to GeoJSON features for output
     features = labels_to_features(segmentation_predictions, object_type="annotation")
 
     # Extract the geometries and properties of each feature
