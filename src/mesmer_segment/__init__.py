@@ -14,10 +14,30 @@ from tifffile import TiffFile
 from xarray import DataArray, concat
 from deepcell.applications import Mesmer
 from skimage.segmentation import clear_border
+from skimage.measure import regionprops_table
 from skimage.util import crop
 
 app = typer.Typer(rich_markup_mode="markdown")
 MISSING = object()
+
+# Define the properties to extract from regionprops_table
+properties = [
+    'area',
+    'area_bbox',
+    'area_convex',
+    'area_filled',
+    'major_axis_length',
+    'minor_axis_length',
+    'equivalent_diameter_area',
+    'feret_diameter_max',
+    'orientation',
+    'perimeter',
+    'solidity',
+    'intensity_mean',
+    'intensity_min',
+    'intensity_max',
+    'intensity_std',
+]
 
 
 class CombineMethod(str, Enum):
@@ -47,7 +67,7 @@ def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
 
 def combine_channels(array: DataArray, channels: List[str], combined_name: str, combine_method: CombineMethod) -> DataArray:
     """
-    Combines multiple channels into a single channel by taking the maximum value at each pixel.
+    Combines multiple channels into a single channel using the specified method (prod or max).
     Adds the combined channel to the array.
     """
 
@@ -66,6 +86,27 @@ def combine_channels(array: DataArray, channels: List[str], combined_name: str, 
     return concat([array, combined], dim="C")
 
 
+def extract_channels(array: DataArray, nuclear_channel: str, membrane_channel: str, padding: int = 0) -> np.ndarray:
+    """
+    Extract the nuclear and membrane channels from the input array and return as a 4D numpy array
+    as preparation for segmentation input. Optionally crop the image to a specified padding.
+    """
+
+    seg_array = array.sel(
+        C=[nuclear_channel, membrane_channel]
+    ).expand_dims(
+        "batch"
+    ).transpose(
+        "batch", "X", "Y", "C"
+    ).to_numpy()
+
+    # Crop the image if padding is specified
+    if padding > 0:
+        seg_array = crop(seg_array, ((0, 0), (padding, padding), (padding, padding), (0, 0)))
+
+    return seg_array
+
+
 def calculate_maxima_threshold(segmentation_level: int) -> float:
     """
     Calculate maxima threshold based on code used by MIBIextension tool
@@ -81,35 +122,20 @@ def calculate_maxima_threshold(segmentation_level: int) -> float:
     return 0.1 - 0.1 * subtractive_factor
 
 
-def get_segmentation_predictions(array: DataArray, nuclear_channel: str, membrane_channel: List[str], kwargs_nuclear: dict[str, float], kwargs_whole_cell: dict[str, float], padding: int) -> NDArray:
+def get_segmentation_predictions(seg_array: np.ndarray, mpp: float, kwargs_nuclear: dict[str, float], kwargs_whole_cell: dict[str, float]) -> NDArray:
     """
     Segments the input array using Mesmer.
     Mesmer assumes the input is a 4D array with dimensions (batch, x, y, channel).
     There must be exactly 2 channels, and they have to correspond to nuclear and channel markers respectively
     """
-    combined_membrane_channel = "combined_membrane" if len(membrane_channel) > 1 else membrane_channel[0]
-    np_array = array.sel(
-        C=[nuclear_channel, combined_membrane_channel]
-    ).expand_dims(
-        "batch"
-    ).transpose(
-        "batch", "X", "Y", "C"
-    ).to_numpy()
-
-    # Crop the image if padding is specified
-    if padding > 0:
-        np_array = crop(np_array, ((0, 0), (padding, padding), (padding, padding), (0, 0)))
-
     # Set compartment to nuclear if using pixel expansion
     assert 'pixel_expansion' in kwargs_nuclear, "pixel_expansion must be specified in kwargs_nuclear"
     compartment = "nuclear" if kwargs_nuclear['pixel_expansion'] > 0 else "whole-cell"
 
-    app = Mesmer()
-    mpp = array.attrs["fov_size"] / array.attrs["frame_size"]
-
     # The result is a 4D array, but the first and last dimensions are both 1
+    app = Mesmer()
     return app.predict(
-        np_array,
+        seg_array,
         image_mpp=mpp,
         compartment=compartment,
         postprocess_kwargs_nuclear=kwargs_nuclear,
@@ -117,8 +143,9 @@ def get_segmentation_predictions(array: DataArray, nuclear_channel: str, membran
     ).squeeze().astype("int32")
 
 
-def labels_to_features(lab: np.ndarray, object_type="annotation", connectivity: int=4,
-                      mask=None, classification=None):
+def labels_to_features(lab: np.ndarray, seg_array: np.ndarray, include_measurements=False,
+                       padding=0, object_type="annotation", connectivity: int=4,
+                       mask=None, classification=None):
     """
     Create a GeoJSON FeatureCollection from a labeled image.
     """
@@ -145,6 +172,26 @@ def labels_to_features(lab: np.ndarray, object_type="annotation", connectivity: 
 
         features.append(po)
 
+    # Extract measurements and add to each feature
+    if include_measurements:
+        props = regionprops_table(lab, seg_array, properties=properties)
+
+        for idx, feature in enumerate(features):
+            measurements = {prop_name: props[prop_name][idx] for prop_name in props}
+            if "measurements" not in feature["properties"]:
+                feature["properties"]["measurements"] = {}
+            feature["properties"]["measurements"].update(measurements)
+    
+    # Extract the geometries and properties of each feature
+    geoms = []
+    for feature in features:
+        geoms.append(feature["geometry"])
+
+    # Adjust coordinates to account for cropping
+    if padding > 0:
+        for geom in geoms:
+            geom["coordinates"] = [[[x+padding, y+padding] for x, y in geom["coordinates"][0]]]
+
     return features
 
 
@@ -159,15 +206,21 @@ def main(
     maxima_smooth: Annotated[float, typer.Option(help="Controls what is considered a unique cell (lower values = more separate cells, higher values = fewer cells)", min=0)] = 0,
     min_nuclei_area: Annotated[int, typer.Option(help="Minimum area of nuclei to keep", min=0)] = 15,
     remove_cells_touching_border: Annotated[bool, typer.Option(help="Whether to remove cells touching the border of the image")] = True,
+    include_measurements: Annotated[bool, typer.Option(help="Whether to include shape and marker measurements in the output GeoJSON")] = True,
     pixel_expansion: Annotated[int, typer.Option(help="Specify a manual pixel expansion after segmentation. NOTE: This will perform segmentation in nuclear mode only.")] = 0,
     padding: Annotated[int, typer.Option(help="Number of pixels to crop the image by before segmentation", min=0)] = 96,
 ):
 
     tiff = TiffFile(mibi_tiff)
-    array = mibi_tiff_to_xarray(tiff)
-    array = combine_channels(array, membrane_channel, "combined_membrane", CombineMethod(combine_method))
+    full_array = mibi_tiff_to_xarray(tiff)
+    
+    # Combine channels and prepare image array
+    combined_membrane_channel = "combined_membrane" if len(membrane_channel) > 1 else membrane_channel[0]
+    full_array = combine_channels(full_array, membrane_channel, combined_membrane_channel, CombineMethod(combine_method))
+    seg_array = extract_channels(full_array, nuclear_channel, combined_membrane_channel, padding)
 
     # Collate args and run segmentation
+    mpp = full_array.attrs["fov_size"] / full_array.attrs["frame_size"]
     maxima_threshold = calculate_maxima_threshold(segmentation_level)
     kwargs_nuclear = {'pixel_expansion': pixel_expansion,
                       'maxima_threshold': maxima_threshold,
@@ -177,25 +230,16 @@ def main(
     kwargs_whole_cell = {'maxima_threshold': maxima_threshold,
                          'maxima_smooth': maxima_smooth,
                          'interior_threshold': interior_threshold}
-    segmentation_predictions = get_segmentation_predictions(array, nuclear_channel, membrane_channel,
-                                                            kwargs_nuclear, kwargs_whole_cell, padding)
+    segmentation_predictions = get_segmentation_predictions(seg_array, mpp, kwargs_nuclear, kwargs_whole_cell)
 
     # Post processing functions
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
 
     # Convert to GeoJSON features for output
-    features = labels_to_features(segmentation_predictions, object_type="annotation")
-
-    # Extract the geometries and properties of each feature
-    geoms = []
-    for feature in features:
-        geoms.append(feature["geometry"])
-
-    # Adjust coordinates to account for cropping
-    if padding > 0:
-        for geom in geoms:
-            geom["coordinates"] = [[[x+padding, y+padding] for x, y in geom["coordinates"][0]]]
+    features = labels_to_features(segmentation_predictions, seg_array.squeeze(),
+                                  include_measurements=include_measurements,
+                                  padding=padding, object_type="annotation")
 
     # Create a geopandas dataframe from the geometries and properties
     gdf = gpd.GeoDataFrame.from_features(features)
