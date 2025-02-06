@@ -143,9 +143,9 @@ def get_segmentation_predictions(seg_array: np.ndarray, mpp: float, kwargs_nucle
     ).squeeze().astype("int32")
 
 
-def labels_to_features(lab: np.ndarray, seg_array: np.ndarray, include_measurements=False,
-                       padding=0, object_type="annotation", connectivity: int=4,
-                       mask=None, classification=None):
+def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0),
+                       include_measurements=False, padding=0, object_type="annotation",
+                       connectivity: int=4, mask=None, classification=None):
     """
     Create a GeoJSON FeatureCollection from a labeled image.
     """
@@ -174,7 +174,7 @@ def labels_to_features(lab: np.ndarray, seg_array: np.ndarray, include_measureme
 
     # Extract measurements and add to each feature
     if include_measurements:
-        props = regionprops_table(lab, seg_array, properties=properties)
+        props = regionprops_table(lab, img_array, properties=properties)
 
         for idx, feature in enumerate(features):
             measurements = {prop_name: props[prop_name][idx] for prop_name in props}
@@ -237,7 +237,8 @@ def main(
         segmentation_predictions = clear_border(segmentation_predictions)
 
     # Convert to GeoJSON features for output
-    features = labels_to_features(segmentation_predictions, seg_array.squeeze(),
+    features = labels_to_features(segmentation_predictions,
+                                  img_array=seg_array.squeeze(),
                                   include_measurements=include_measurements,
                                   padding=padding, object_type="annotation")
 
