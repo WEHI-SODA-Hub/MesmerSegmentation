@@ -144,12 +144,23 @@ def get_segmentation_predictions(seg_array: np.ndarray, mpp: float, kwargs_nucle
 
 
 def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0),
-                       include_measurements=False, padding=0, object_type="annotation",
+                       include_measurements=False, padding=0, object_type="cell",
                        connectivity: int=4, mask=None, classification=None):
     """
     Create a GeoJSON FeatureCollection from a labeled image.
     """
     features = []
+
+    # Create a top-level feature that spans the entire image.
+    # This serves as a container to hold the cell objects.
+    if img_array.size > 0:
+        props = dict(object_type="image", isLocked=True)
+        po = dict(type="Feature", geometry=dict(type="Polygon",
+                  coordinates=[[[0, 0], [0, img_array.shape[1]],
+                                [img_array.shape[0], img_array.shape[1]],
+                                [img_array.shape[0], 0], [0, 0]]],),
+                  properties=props)
+        features.append(po)
 
     # Ensure types are valid
     if lab.dtype == bool:
@@ -159,7 +170,9 @@ def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0
         mask = lab > 0
 
     # Trace geometries
-    for s in rasterio.features.shapes(lab, mask=mask, connectivity=connectivity):
+    for s in rasterio.features.shapes(lab,
+                                      mask=mask,
+                                      connectivity=connectivity):
         # Create properties
         props = dict(object_type=object_type)
 
@@ -177,11 +190,17 @@ def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0
         props = regionprops_table(lab, img_array, properties=properties)
 
         for idx, feature in enumerate(features):
-            measurements = {prop_name: props[prop_name][idx] for prop_name in props}
+            # we need to subtract 1 from idx as we added a top-level feature
+            idx = idx - 1
+            if idx < 0:
+                continue
+            measurements = {
+                prop_name: props[prop_name][idx] for prop_name in props
+            }
             if "measurements" not in feature["properties"]:
                 feature["properties"]["measurements"] = {}
             feature["properties"]["measurements"].update(measurements)
-    
+
     # Extract the geometries and properties of each feature
     geoms = []
     for feature in features:
@@ -190,7 +209,9 @@ def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0
     # Adjust coordinates to account for cropping
     if padding > 0:
         for geom in geoms:
-            geom["coordinates"] = [[[x+padding, y+padding] for x, y in geom["coordinates"][0]]]
+            geom["coordinates"] = [
+                [[x+padding, y+padding] for x, y in geom["coordinates"][0]]
+            ]
 
     return features
 
@@ -213,7 +234,7 @@ def main(
 
     tiff = TiffFile(mibi_tiff)
     full_array = mibi_tiff_to_xarray(tiff)
-    
+
     # Combine channels and prepare image array
     combined_membrane_channel = "combined_membrane" if len(membrane_channel) > 1 else membrane_channel[0]
     full_array = combine_channels(full_array, membrane_channel, combined_membrane_channel, CombineMethod(combine_method))
@@ -240,7 +261,7 @@ def main(
     features = labels_to_features(segmentation_predictions,
                                   img_array=seg_array.squeeze(),
                                   include_measurements=include_measurements,
-                                  padding=padding, object_type="annotation")
+                                  padding=padding, object_type="cell")
 
     # Create a geopandas dataframe from the geometries and properties
     gdf = gpd.GeoDataFrame.from_features(features)
