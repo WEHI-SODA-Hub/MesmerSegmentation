@@ -20,7 +20,7 @@ from skimage.util import crop
 app = typer.Typer(rich_markup_mode="markdown")
 MISSING = object()
 
-# Define the properties to extract from regionprops_table
+# Define the properties to extract from regionprops_table per feature
 properties = [
     'area',
     'area_bbox',
@@ -32,12 +32,16 @@ properties = [
     'feret_diameter_max',
     'orientation',
     'perimeter',
-    'solidity',
+    'solidity'
+]
+# Define the properties to extract from regionprops_table per channel
+channel_properties = [
     'intensity_mean',
     'intensity_min',
     'intensity_max',
-    'intensity_std',
+    'intensity_std'
 ]
+
 
 
 class CombineMethod(str, Enum):
@@ -143,24 +147,18 @@ def get_segmentation_predictions(seg_array: np.ndarray, mpp: float, kwargs_nucle
     ).squeeze().astype("int32")
 
 
-def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0),
-                       include_measurements=False, padding=0, object_type="cell",
-                       connectivity: int=4, mask=None, classification=None):
+def labels_to_features(lab: np.ndarray,
+                       img_array: DataArray,
+                       include_measurements: bool = False,
+                       padding: int = 0,
+                       object_type: str = "cell",
+                       connectivity: int = 4,
+                       mask=None,
+                       classification=None):
     """
     Create a GeoJSON FeatureCollection from a labeled image.
     """
     features = []
-
-    # Create a top-level feature that spans the entire image.
-    # This serves as a container to hold the cell objects.
-    if img_array.size > 0:
-        props = dict(object_type="image", isLocked=True)
-        po = dict(type="Feature", geometry=dict(type="Polygon",
-                  coordinates=[[[0, 0], [0, img_array.shape[1]],
-                                [img_array.shape[0], img_array.shape[1]],
-                                [img_array.shape[0], 0], [0, 0]]],),
-                  properties=props)
-        features.append(po)
 
     # Ensure types are valid
     if lab.dtype == bool:
@@ -187,19 +185,36 @@ def labels_to_features(lab: np.ndarray, img_array: np.ndarray=np.ndarray(shape=0
 
     # Extract measurements and add to each feature
     if include_measurements:
-        props = regionprops_table(lab, img_array, properties=properties)
+        props = regionprops_table(lab, img_array[:, :, 0].to_numpy(),
+                                  properties=properties)
+
+        # Get channel-specific properties
+        for channel_index in range(img_array.shape[2]):
+            channel_img = img_array[:, :, channel_index].to_numpy()
+            channel_label = img_array.C.to_numpy()[channel_index]
+            channel_props = regionprops_table(
+                lab, channel_img, properties=channel_properties
+            )
+            for prop_name in channel_props:
+                prop_label = f"Target: {channel_label}: {prop_name}"
+                props[prop_label] = channel_props[prop_name]
 
         for idx, feature in enumerate(features):
-            # we need to subtract 1 from idx as we added a top-level feature
-            idx = idx - 1
-            if idx < 0:
-                continue
             measurements = {
                 prop_name: props[prop_name][idx] for prop_name in props
             }
             if "measurements" not in feature["properties"]:
                 feature["properties"]["measurements"] = {}
             feature["properties"]["measurements"].update(measurements)
+
+    # Create a top-level feature that spans the entire image.
+    props = dict(object_type="annotation", isLocked=True)
+    po = dict(type="Feature", geometry=dict(type="Polygon",
+              coordinates=[[[0, 0], [0, img_array.shape[1]],
+                            [img_array.shape[0], img_array.shape[1]],
+                            [img_array.shape[0], 0], [0, 0]]],),
+              properties=props)
+    features.append(po)
 
     # Extract the geometries and properties of each feature
     geoms = []
@@ -251,15 +266,21 @@ def main(
     kwargs_whole_cell = {'maxima_threshold': maxima_threshold,
                          'maxima_smooth': maxima_smooth,
                          'interior_threshold': interior_threshold}
-    segmentation_predictions = get_segmentation_predictions(seg_array, mpp, kwargs_nuclear, kwargs_whole_cell)
+
+    segmentation_predictions = get_segmentation_predictions(
+        seg_array, mpp, kwargs_nuclear, kwargs_whole_cell
+    )
 
     # Post processing functions
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
 
     # Convert to GeoJSON features for output
+    img_array = full_array.expand_dims("batch").transpose(
+        "batch", "X", "Y", "C"
+    ).squeeze()
     features = labels_to_features(segmentation_predictions,
-                                  img_array=seg_array.squeeze(),
+                                  img_array=img_array,
                                   include_measurements=include_measurements,
                                   padding=padding, object_type="cell")
 
