@@ -43,10 +43,14 @@ channel_properties = [
 ]
 
 
-
 class CombineMethod(str, Enum):
     PROD = "prod"
     MAX = "max"
+
+
+class Compartment(str, Enum):
+    WHOLE_CELL = "whole-cell"
+    NUCLEAR = "nuclear"
 
 
 def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
@@ -126,17 +130,17 @@ def calculate_maxima_threshold(segmentation_level: int) -> float:
     return 0.1 - 0.1 * subtractive_factor
 
 
-def get_segmentation_predictions(seg_array: np.ndarray, mpp: float, kwargs_nuclear: dict[str, float], kwargs_whole_cell: dict[str, float]) -> NDArray:
+def get_segmentation_predictions(seg_array: np.ndarray,
+                                 mpp: float,
+                                 compartment: Compartment,
+                                 kwargs_nuclear: dict[str, float],
+                                 kwargs_whole_cell: dict[str, float]) -> NDArray:
     """
     Segments the input array using Mesmer.
-    Mesmer assumes the input is a 4D array with dimensions (batch, x, y, channel).
-    There must be exactly 2 channels, and they have to correspond to nuclear and channel markers respectively
+    Mesmer assumes the input is a 4D array with dimensions (batch, x, y,
+    channel). There must be exactly 2 channels, and they have to correspond
+    to nuclear and channel markers respectively
     """
-    # Set compartment to nuclear if using pixel expansion
-    assert 'pixel_expansion' in kwargs_nuclear, "pixel_expansion must be specified in kwargs_nuclear"
-    compartment = "nuclear" if kwargs_nuclear['pixel_expansion'] > 0 else "whole-cell"
-
-    # The result is a 4D array, but the first and last dimensions are both 1
     app = Mesmer()
     return app.predict(
         seg_array,
@@ -236,6 +240,7 @@ def main(
     mibi_tiff: Annotated[Path, typer.Argument(help="Path to the MIBI TIFF input file")],
     nuclear_channel: Annotated[str, typer.Option(help="Name of the nuclear channel")],
     membrane_channel: Annotated[List[str], typer.Option(help="Name(s) of the membrane channels (can be repeated)")],
+    compartment: Annotated[Compartment, typer.Option(help="Compartment to segment (whole-cell or nuclear)")] = Compartment.WHOLE_CELL,
     combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (prod or max)")] = CombineMethod.PROD,
     segmentation_level: Annotated[int, typer.Option(help="Segmentation level between 0-10 where 0 is less segmentation and 10 is more", min=0, max=10)] = 5,
     interior_threshold: Annotated[float, typer.Option(help="Controls how conservative model is in distinguishing cell from background (lower values = larger cells, higher values = smaller cells)")] = 0.3,
@@ -243,7 +248,7 @@ def main(
     min_nuclei_area: Annotated[int, typer.Option(help="Minimum area of nuclei to keep", min=0)] = 15,
     remove_cells_touching_border: Annotated[bool, typer.Option(help="Whether to remove cells touching the border of the image")] = True,
     include_measurements: Annotated[bool, typer.Option(help="Whether to include shape and marker measurements in the output GeoJSON")] = True,
-    pixel_expansion: Annotated[int, typer.Option(help="Specify a manual pixel expansion after segmentation. NOTE: This will perform segmentation in nuclear mode only.")] = 0,
+    pixel_expansion: Annotated[int, typer.Option(help="Specify a manual pixel expansion after segmentation.")] = 0,
     padding: Annotated[int, typer.Option(help="Number of pixels to crop the image by before segmentation", min=0)] = 96,
 ):
 
@@ -263,12 +268,13 @@ def main(
                       'maxima_smooth': maxima_smooth,
                       'interior_threshold': interior_threshold,
                       'small_objects_threshold': min_nuclei_area}
-    kwargs_whole_cell = {'maxima_threshold': maxima_threshold,
+    kwargs_whole_cell = {'pixel_expansion': pixel_expansion,
+                         'maxima_threshold': maxima_threshold,
                          'maxima_smooth': maxima_smooth,
                          'interior_threshold': interior_threshold}
 
     segmentation_predictions = get_segmentation_predictions(
-        seg_array, mpp, kwargs_nuclear, kwargs_whole_cell
+        seg_array, mpp, compartment, kwargs_nuclear, kwargs_whole_cell
     )
 
     # Post processing functions
