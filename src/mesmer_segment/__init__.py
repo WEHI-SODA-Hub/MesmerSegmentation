@@ -10,7 +10,7 @@ import numpy as np
 import rasterio.features
 import typer
 from numpy.typing import NDArray
-from tifffile import TiffFile
+from tifffile import TiffFile, imwrite
 from xarray import DataArray, concat
 from deepcell.applications import Mesmer
 from skimage.segmentation import clear_border
@@ -51,6 +51,11 @@ class CombineMethod(str, Enum):
 class Compartment(str, Enum):
     WHOLE_CELL = "whole-cell"
     NUCLEAR = "nuclear"
+
+
+class OutputType(str, Enum):
+    GEOJSON = "geojson"
+    TIFF = "tiff"
 
 
 def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
@@ -250,6 +255,7 @@ def main(
     include_measurements: Annotated[bool, typer.Option(help="Whether to include shape and marker measurements in the output GeoJSON")] = True,
     pixel_expansion: Annotated[int, typer.Option(help="Specify a manual pixel expansion after segmentation.")] = 0,
     padding: Annotated[int, typer.Option(help="Number of pixels to crop the image by before segmentation", min=0)] = 96,
+    output_type: Annotated[OutputType, typer.Option(help="Output format (geojson or tiff)")] = OutputType.GEOJSON,
 ):
 
     tiff = TiffFile(mibi_tiff)
@@ -262,6 +268,7 @@ def main(
 
     # Collate args and run segmentation
     mpp = full_array.attrs["fov_size"] / full_array.attrs["frame_size"]
+    # TODO: allow setting of maxima_threshold directly
     maxima_threshold = calculate_maxima_threshold(segmentation_level)
     kwargs_nuclear = {'pixel_expansion': pixel_expansion,
                       'maxima_threshold': maxima_threshold,
@@ -281,20 +288,23 @@ def main(
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
 
-    # Convert to GeoJSON features for output
-    img_array = full_array.expand_dims("batch").transpose(
-        "batch", "X", "Y", "C"
-    ).squeeze()
-    features = labels_to_features(segmentation_predictions,
-                                  img_array=img_array,
-                                  include_measurements=include_measurements,
-                                  padding=padding, object_type="cell")
+    if output_type == OutputType.TIFF:
+        imwrite(sys.stdout.buffer, segmentation_predictions)
+    elif output_type == OutputType.GEOJSON:
+        # Convert to GeoJSON features for output
+        img_array = full_array.expand_dims("batch").transpose(
+            "batch", "X", "Y", "C"
+        ).squeeze()
+        features = labels_to_features(segmentation_predictions,
+                                      img_array=img_array,
+                                      include_measurements=include_measurements,
+                                      padding=padding, object_type="cell")
 
-    # Create a geopandas dataframe from the geometries and properties
-    gdf = gpd.GeoDataFrame.from_features(features)
+        # Create a geopandas dataframe from the geometries and properties
+        gdf = gpd.GeoDataFrame.from_features(features)
 
-    # Write the geopandas dataframe to a GeoJSON file
-    with BytesIO() as buffer:
-        gdf.to_file(buffer, driver="GeoJSON")
-        buffer.seek(0)
-        sys.stdout.buffer.write(buffer.read())
+        # Write the geopandas dataframe to a GeoJSON file
+        with BytesIO() as buffer:
+            gdf.to_file(buffer, driver="GeoJSON")
+            buffer.seek(0)
+            sys.stdout.buffer.write(buffer.read())
