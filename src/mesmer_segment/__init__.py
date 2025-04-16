@@ -248,6 +248,7 @@ def main(
     compartment: Annotated[Compartment, typer.Option(help="Compartment to segment (whole-cell or nuclear)")] = Compartment.WHOLE_CELL,
     combine_method: Annotated[CombineMethod, typer.Option(help="Method to use for combining channels (prod or max)")] = CombineMethod.PROD,
     segmentation_level: Annotated[int, typer.Option(help="Segmentation level between 0-10 where 0 is less segmentation and 10 is more", min=0, max=10)] = 5,
+    maxima_threshold: Annotated[float, typer.Option(help="Controls segmentation level directly in mesmer, not sure scaling via segmentation_level (lower values = more cells, higher values = fewer cells). Provide a value >0 to use this parameter")] = -1,
     interior_threshold: Annotated[float, typer.Option(help="Controls how conservative model is in distinguishing cell from background (lower values = larger cells, higher values = smaller cells)")] = 0.3,
     maxima_smooth: Annotated[float, typer.Option(help="Controls what is considered a unique cell (lower values = more separate cells, higher values = fewer cells)", min=0)] = 0,
     min_nuclei_area: Annotated[int, typer.Option(help="Minimum area of nuclei to keep", min=0)] = 15,
@@ -268,17 +269,29 @@ def main(
 
     # Collate args and run segmentation
     mpp = full_array.attrs["fov_size"] / full_array.attrs["frame_size"]
-    # TODO: allow setting of maxima_threshold directly
-    maxima_threshold = calculate_maxima_threshold(segmentation_level)
-    kwargs_nuclear = {'pixel_expansion': pixel_expansion,
-                      'maxima_threshold': maxima_threshold,
-                      'maxima_smooth': maxima_smooth,
-                      'interior_threshold': interior_threshold,
-                      'small_objects_threshold': min_nuclei_area}
-    kwargs_whole_cell = {'pixel_expansion': pixel_expansion,
-                         'maxima_threshold': maxima_threshold,
-                         'maxima_smooth': maxima_smooth,
-                         'interior_threshold': interior_threshold}
+
+    # if no direct maxima_threshold is provided, use the segmentation_level
+    if maxima_threshold < 0:
+        maxima_threshold = calculate_maxima_threshold(segmentation_level)
+
+    print(f"Segmenting with MPP: {mpp} and compartment: {compartment} "
+          f"using maxima_threshold: {maxima_threshold}",
+          file=sys.stderr)
+
+    kwargs_nuclear = {
+        'pixel_expansion': pixel_expansion,
+        'maxima_threshold': maxima_threshold,
+        'maxima_smooth': maxima_smooth,
+        'interior_threshold': interior_threshold,
+        'small_objects_threshold': min_nuclei_area
+    }
+
+    kwargs_whole_cell = {
+        'pixel_expansion': pixel_expansion,
+        'maxima_threshold': maxima_threshold,
+        'maxima_smooth': maxima_smooth,
+        'interior_threshold': interior_threshold
+    }
 
     segmentation_predictions = get_segmentation_predictions(
         seg_array, mpp, compartment, kwargs_nuclear, kwargs_whole_cell
