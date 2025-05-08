@@ -7,6 +7,6 @@ ENV PATH="$MAMBA_ROOT_PREFIX/bin:$PATH" \
     HOME=/tmp
 
 RUN echo "Installing dependencies with micromamba..." && \
-    micromamba install -y -n base -f /tmp/conda.yml && \
-    micromamba install -y -n base conda-forge::procps-ng && \
+    micromamba install -y -n base -f /tmp/conda.yml --strict-channel-priority && \
+    micromamba install -y -n base conda-forge::procps-ng --strict-channel-priority  && \
     micromamba clean -a -y
