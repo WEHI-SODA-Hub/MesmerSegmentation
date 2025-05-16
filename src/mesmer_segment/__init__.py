@@ -153,7 +153,7 @@ def get_segmentation_predictions(seg_array: np.ndarray,
         compartment=compartment,
         postprocess_kwargs_nuclear=kwargs_nuclear,
         postprocess_kwargs_whole_cell=kwargs_whole_cell
-    ).squeeze().astype("int32")
+    ).squeeze().astype("uint32")
 
 
 def labels_to_features(lab: np.ndarray,
