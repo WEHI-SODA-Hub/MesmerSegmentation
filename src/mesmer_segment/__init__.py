@@ -149,52 +149,56 @@ def get_segmentation_predictions(seg_array: np.ndarray,
 )
 def main(
     mibi_tiff: Annotated[Path, typer.Argument(
-        help="Path to the MIBI TIFF input file"
+        help="Path to the MIBI TIFF input file."
     )],
     nuclear_channel: Annotated[str, typer.Option(
-        help="Name of the nuclear channel"
+        help="Name of the nuclear channel."
     )],
     membrane_channel: Annotated[List[str], typer.Option(
-        help="Name(s) of the membrane channels (can be repeated)")
+        help="Name(s) of the membrane channels (can be repeated)"
+             "Ensure that channels with spaces are quoted.")
     ],
     compartment: Annotated[Compartment, typer.Option(
-        help="Compartment to segment (whole-cell or nuclear)")
+        help="Compartment to segment (whole-cell or nuclear).")
     ] = Compartment.WHOLE_CELL,
     combine_method: Annotated[CombineMethod, typer.Option(
-        help="Method to use for combining channels (prod or max)")
+        help="Method to use for combining channels (prod or max).")
     ] = CombineMethod.PROD,
     segmentation_level: Annotated[int, typer.Option(
-        help="Segmentation level between 0-10 where 0 is"
-             "less segmentation and 10 is more", min=0, max=10)
-    ] = 5,
+        help="Segmentation level between 0-10 where 0 is "
+             "less segmentation and 10 is more. Set to -1 "
+             "to use maxima_threshold instead. (This option "
+             "is for backwards compatibility with an old tool.)",
+        min=-1, max=10)
+    ] = -1,
     maxima_threshold: Annotated[float, typer.Option(
         help="Controls segmentation level directly in mesmer, "
              "not sure scaling via segmentation_level (lower "
              "values = more cells, higher values = fewer cells). "
-             "Provide a value >0 to use this parameter")
-    ] = -1,
+             "Provide a value >0 to use this parameter.", min=0)
+    ] = 0.1,
     interior_threshold: Annotated[float, typer.Option(
         help="Controls how conservative model is in distinguishing "
              "cell from background (lower values = larger cells, "
-             "higher values = smaller cells)")
+             "higher values = smaller cells).")
     ] = 0.3,
     maxima_smooth: Annotated[float, typer.Option(
         help="Controls what is considered a unique cell (lower values "
-             "= more separate cells, higher values = fewer cells)", min=0)
+             "= more separate cells, higher values = fewer cells).", min=0)
     ] = 0,
     min_nuclei_area: Annotated[int, typer.Option(
-        help="Minimum area of nuclei to keep", min=0)
+        help="Minimum area of nuclei to keep.", min=0)
     ] = 15,
     remove_cells_touching_border: Annotated[bool, typer.Option(
-        help="Whether to remove cells touching the border of the image")
+        help="Whether to remove cells touching the border of the image.")
     ] = True,
     pixel_expansion: Annotated[int, typer.Option(
-        help="Specify a manual pixel expansion after segmentation.")
+        help="Specify a manual pixel expansion after segmentation.", min=0)
     ] = 0,
     padding: Annotated[int, typer.Option(
-        help="Number of pixels to crop the image by before segmentation",
+        help="Number of pixels to crop the image by before segmentation.",
         min=0)
-    ] = 96,
+    ] = 0,
 ):
 
     tiff = TiffFile(mibi_tiff)
@@ -213,7 +217,7 @@ def main(
     mpp = full_array.attrs["fov_size"] / full_array.attrs["frame_size"]
 
     # if no direct maxima_threshold is provided, use the segmentation_level
-    if maxima_threshold < 0:
+    if segmentation_level > -1:
         maxima_threshold = calculate_maxima_threshold(segmentation_level)
 
     print(f"Segmenting with MPP: {mpp} and compartment: {compartment} "
@@ -221,7 +225,6 @@ def main(
           file=sys.stderr)
 
     kwargs_nuclear = {
-        "pixel_expansion": pixel_expansion,
         "maxima_threshold": maxima_threshold,
         "maxima_smooth": maxima_smooth,
         "interior_threshold": interior_threshold,
