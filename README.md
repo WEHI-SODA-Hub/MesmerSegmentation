@@ -8,7 +8,7 @@ Install this repo. You can do so using `pip install git+https://github.com/WEHI-
 
 ## CLI Usage
 
-Don't forget to obtain an API key (see [here](https://deepcell.readthedocs.io/en/master/API-key.html)
+Don't forget to obtain an API key (see [here](https://deepcell.readthedocs.io/en/master/API-key.html))
 and export it like so:
 
 ```bash
@@ -81,8 +81,7 @@ mesmer-segment image.tiff \
     --nuclear-channel dsDNA \
     --membrane-channel panCK \
     --membrane-channel "MHC I" \
-    --compartment whole-cell \
-    --output-type tiff > result.tiff
+    --compartment whole-cell > result.tiff
 ```
 
 Note: make sure to put quotes around channel names with spaces, e.g., `--membrane-channel "MHC I (HLA A B C)"`.
