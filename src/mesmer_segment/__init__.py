@@ -1,5 +1,6 @@
 import json
 import sys
+import xml.etree.ElementTree as ET
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, List
@@ -34,23 +35,95 @@ class Compartment(str, Enum):
     NUCLEAR = "nuclear"
 
 
-def mibi_tiff_to_xarray(tiff: TiffFile) -> DataArray:
+def get_pixels_tag(xml_str: str) -> ET.Element:
     """
-    Takes a MIBI TIFF and converts it to an xarray with relevant axis,
-    coordinate and metadata attached. Note: won"t work with a regular
-    TIFF as this depends on MIBI specific metadata
+    Parses the OME-XML string and returns the Pixels tag.
+    """
+    root = ET.fromstring(xml_str)
+    ns = {'ome': root.tag.split('}')[0].strip('{')}
+    image_tag = root.find('ome:Image', ns)
+
+    if image_tag is None:
+        raise ValueError("No Image tag found in the XML.")
+
+    pixels_tag = image_tag.find('ome:Pixels', ns)
+    if pixels_tag is None:
+        raise ValueError("No Pixels tag found in the Image tag.")
+
+    return pixels_tag
+
+
+def extract_channel_names(xml_str) -> List[str]:
+    """
+    Extracts all channel 'Name' attributes from OME-XML in the order they
+    appear. Returns a list of channel names by index.
+    """
+    pixels_tag = get_pixels_tag(xml_str)
+
+    root = ET.fromstring(xml_str)
+    ns = {'ome': root.tag.split('}')[0].strip('{')}
+    channel_tags = pixels_tag.findall('ome:Channel', ns)
+
+    channel_names = [ch.get('Name', 'Unknown') for ch in channel_tags]
+    return channel_names
+
+
+def extract_microns_per_pixel(xml_str) -> float:
+    """
+    Parse the XML string and extract microns per pixel, which is stored
+    under the PhysicalSizeX/Y attributes of the Pixels tag under the Image
+    tag. Will fail if the two physical sizes are not equal, or if they are
+    not found.
+    """
+    pixels_tag = get_pixels_tag(xml_str)
+    physical_size_x = pixels_tag.get('PhysicalSizeX')
+    physical_size_y = pixels_tag.get('PhysicalSizeY')
+
+    if physical_size_x is None or physical_size_y is None:
+        raise ValueError(
+            "PhysicalSizeX or PhysicalSizeY not found in the XML."
+        )
+
+    if physical_size_x != physical_size_y:
+        raise ValueError(
+            "PhysicalSizeX and PhysicalSizeY are not equal."
+        )
+
+    return float(physical_size_x)
+
+
+def tiff_to_xarray(tiffPath: Path) -> DataArray:
+    """
+    Takes a TIFF and converts it to an xarray with relevant axis,
+    coordinate and metadata attached. Supports MIBI TIFF and OME-TIFF.
     """
     channel_names: list[str] = []
-    attrs: dict[str, int] = {}
+    attrs: dict[str, float] = {}
     #: List of channels, each of which are 2D
     channels = []
 
-    for page in tiff.pages:
-        description = json.loads(page.description)
-        channel_names.append(description["channel.target"])
-        attrs["fov_size"] = description["raw_description"]["fovSizeMicrons"]
-        attrs["frame_size"] = description["raw_description"]["frameSize"]
-        channels.append(page.asarray())
+    with TiffFile(tiffPath) as tiff:
+        for page in tiff.pages:
+            is_json = False
+            try:
+                description = json.loads(page.description)
+                is_json = True
+            except (json.JSONDecodeError, TypeError):
+                is_json = False
+
+            if is_json:
+                channel_names.append(description["channel.target"])
+                attrs["fov_size"] = description["raw_description"]["fovSizeMicrons"]
+                attrs["frame_size"] = description["raw_description"]["frameSize"]
+                channels.append(page.asarray())
+            elif page.description == "":
+                # we assume this is a subsequent page of the OME-TIFF
+                channels.append(page.asarray())
+            else:
+                # we assume this is the first page of the OME-TIFF
+                channel_names = extract_channel_names(page.description)
+                attrs["microns_per_pixel"] = extract_microns_per_pixel(page.description)
+                channels.append(page.asarray())
 
     return DataArray(data=channels, dims=["C", "X", "Y"],
                      coords={"C": channel_names}, attrs=attrs)
@@ -142,14 +215,14 @@ def get_segmentation_predictions(seg_array: np.ndarray,
 
 
 @app.command(
-    help="Segments a MIBI TIFF using Mesmer, and prints the result to"
-         "stdout. Note that you will need to obtain and export a "
-         "DeepCell API key as explained "
-         "here: https://deepcell.readthedocs.io/en/master/API-key.html"
+    help="Segments a MIBI or OME-XML TIFF using Mesmer, and prints the result "
+         "to stdout. Note that you will need to obtain and export a DeepCell "
+         "API key as explained here: "
+         "https://deepcell.readthedocs.io/en/master/API-key.html"
 )
 def main(
-    mibi_tiff: Annotated[Path, typer.Argument(
-        help="Path to the MIBI TIFF input file."
+    tiff: Annotated[Path, typer.Argument(
+        help="Path to the TIFF input file."
     )],
     nuclear_channel: Annotated[str, typer.Option(
         help="Name of the nuclear channel."
@@ -201,8 +274,7 @@ def main(
     ] = 0,
 ):
 
-    tiff = TiffFile(mibi_tiff)
-    full_array = mibi_tiff_to_xarray(tiff)
+    full_array = tiff_to_xarray(tiff)
 
     # Combine channels and prepare image array
     combined_membrane_channel = "combined_membrane" \
@@ -213,8 +285,11 @@ def main(
     seg_array = extract_channels(full_array, nuclear_channel,
                                  combined_membrane_channel, padding)
 
-    # Collate args and run segmentation
-    mpp = full_array.attrs["fov_size"] / full_array.attrs["frame_size"]
+    # Calculate or fetch microns per pixel (MPP)
+    if "fov_size" not in full_array.attrs:
+        mpp = full_array.attrs.get("microns_per_pixel", 0.5)
+    else:
+        mpp = full_array.attrs["fov_size"] / full_array.attrs["frame_size"]
 
     # if no direct maxima_threshold is provided, use the segmentation_level
     if segmentation_level > -1:
