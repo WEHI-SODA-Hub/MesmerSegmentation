@@ -103,26 +103,28 @@ def tiff_to_xarray(tiffPath: Path) -> DataArray:
     channels = []
 
     with TiffFile(tiffPath) as tiff:
-        for page in tiff.pages:
-            is_json = False
-            try:
-                description = json.loads(page.description)
-                is_json = True
-            except (json.JSONDecodeError, TypeError):
-                is_json = False
+        first_page = tiff.pages[0]
+        try:
+            desc = json.loads(first_page.description)
+            is_mibi = True
+        except (json.JSONDecodeError, TypeError):
+            is_mibi = False
 
-            if is_json:
-                channel_names.append(description["channel.target"])
-                attrs["fov_size"] = description["raw_description"]["fovSizeMicrons"]
-                attrs["frame_size"] = description["raw_description"]["frameSize"]
+        if is_mibi:
+            # MIBI TIFF: each page is a channel
+            for page in tiff.pages:
+                desc = json.loads(page.description)
+                channel_names.append(desc["channel.target"])
+                if not attrs:
+                    attrs["fov_size"] = desc["raw_description"]["fovSizeMicrons"]
+                    attrs["frame_size"] = desc["raw_description"]["frameSize"]
                 channels.append(page.asarray())
-            elif page.description == "":
-                # we assume this is a subsequent page of the OME-TIFF
-                channels.append(page.asarray())
-            else:
-                # we assume this is the first page of the OME-TIFF
-                channel_names = extract_channel_names(page.description)
-                attrs["microns_per_pixel"] = extract_microns_per_pixel(page.description)
+        else:
+            # OME-TIFF: channel info in first page only
+            channel_names = extract_channel_names(first_page.description)
+            attrs["microns_per_pixel"] = \
+                extract_microns_per_pixel(first_page.description)
+            for page in tiff.pages:
                 channels.append(page.asarray())
 
     return DataArray(data=channels, dims=["C", "X", "Y"],
