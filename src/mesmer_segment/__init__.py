@@ -116,7 +116,8 @@ def tiff_to_xarray(tiffPath: Path) -> DataArray:
                 desc = json.loads(page.description)
                 channel_names.append(desc["channel.target"])
                 if not attrs:
-                    attrs["fov_size"] = desc["raw_description"]["fovSizeMicrons"]
+                    attrs["fov_size"] = \
+                        desc["raw_description"]["fovSizeMicrons"]
                     attrs["frame_size"] = desc["raw_description"]["frameSize"]
                 channels.append(page.asarray())
         else:
@@ -141,16 +142,34 @@ def combine_channels(array: DataArray, channels: List[str], combined_name: str,
     if len(channels) == 1:
         return array
 
-    combined = array.sel(C=channels)
+    # Select the specified channels
+    selected_data = array.sel(C=channels).values
 
     if combine_method == CombineMethod.MAX:
-        combined = combined.max(dim="C")
+        combined_data = np.max(selected_data, axis=0, keepdims=True)
     elif combine_method == CombineMethod.PROD:
-        combined = combined.prod(dim="C")
+        # Convert to uint64 to avoid possible overflow
+        selected_data = selected_data.astype(np.uint64)
+        combined_data = np.prod(selected_data, axis=0, keepdims=True)
 
-    combined = combined.expand_dims("C").assign_coords(C=[combined_name])
+    # Convert back to uint16, scaling if necessary
+    max_val: int = np.iinfo(np.uint16).max
+    if np.max(combined_data) > max_val:
+        scale_factor: float = (np.iinfo(np.uint16).max - 1) / max_val
+        combined_data = np.clip(combined_data * scale_factor, 0,
+                                np.iinfo(np.uint16).max).astype(np.uint16)
+    else:
+        combined_data = combined_data.astype(np.uint16)
 
-    return concat([array, combined], dim="C")
+    # Create new array with combined channel
+    new_data = np.concatenate([array.values, combined_data], axis=0)
+    new_coords = list(array.coords["C"].values) + [combined_name]
+
+    # Delete intermediate arrays to free memory
+    del selected_data, combined_data
+
+    return DataArray(data=new_data, dims=["C", "Y", "X"],
+                     coords={"C": new_coords}, attrs=array.attrs)
 
 
 def extract_channels(array: DataArray, nuclear_channel: str,
@@ -248,8 +267,7 @@ def main(
     ] = -1,
     maxima_threshold: Annotated[float, typer.Option(
         help="Controls segmentation level directly in mesmer, "
-             "not sure scaling via segmentation_level (lower "
-             "values = more cells, higher values = fewer cells). "
+             "(lower values = more cells, higher values = fewer cells). "
              "Provide a value >0 to use this parameter.", min=0)
     ] = 0.1,
     interior_threshold: Annotated[float, typer.Option(
