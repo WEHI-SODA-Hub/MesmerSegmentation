@@ -219,7 +219,7 @@ def tiff_to_xarray(tiff_path: Path) -> DataArray:
 
     return DataArray(
         data=channels,
-        dims=["C", "X", "Y"],
+        dims=["C", "Y", "X"],
         coords={"C": channel_names},
         attrs=attrs,
     )

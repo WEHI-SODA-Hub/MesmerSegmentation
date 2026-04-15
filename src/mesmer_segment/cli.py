@@ -132,7 +132,7 @@ def main(
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
 
-    # seg_array has shape (batch, X, Y, C); spatial dims are [1] and [2]
+    # seg_array has shape (batch, Y, X, C); spatial dims are [1] and [2]
     expected_shape = (seg_array.shape[1], seg_array.shape[2])
     segmentation_predictions = fix_mask_orientation(
         segmentation_predictions, expected_shape, force_transpose

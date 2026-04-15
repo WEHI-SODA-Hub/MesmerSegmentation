@@ -67,7 +67,7 @@ def combine_channels(
     del selected_data, combined_data
 
     return DataArray(
-        data=new_data, dims=["C", "Y", "X"],
+        data=new_data, dims=array.dims,
         coords={"C": new_coords}, attrs=array.attrs,
     )
 
@@ -80,13 +80,13 @@ def extract_channels(
 ) -> np.ndarray:
     """
     Extract the nuclear and membrane channels from the input array and return
-    as a 4D numpy array (batch, X, Y, C) ready for Mesmer. Optionally crops
+    as a 4D numpy array (batch, Y, X, C) ready for Mesmer. Optionally crops
     by `padding` pixels on each side.
     """
     seg_array = (
         array.sel(C=[nuclear_channel, membrane_channel])
         .expand_dims("batch")
-        .transpose("batch", "X", "Y", "C")
+        .transpose("batch", "Y", "X", "C")
         .to_numpy()
     )
 
