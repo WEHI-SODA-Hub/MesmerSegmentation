@@ -10,8 +10,3 @@ RUN echo "Installing dependencies with micromamba..." && \
     micromamba install -y -n base -f /tmp/conda.yml --strict-channel-priority && \
     micromamba install -y -n base conda-forge::procps-ng --strict-channel-priority  && \
     micromamba clean -a -y
-
-WORKDIR /app
-COPY . /app
-
-RUN pip install --no-deps .
