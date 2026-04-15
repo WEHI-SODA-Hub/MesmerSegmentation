@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mesmer_segment"
-version = "0.2.0"
-requires-python = "<=3.10"
+version = "0.3.0"
+requires-python = "~=3.10"
 dependencies = [
     "typer",
     "deepcell",
@@ -18,3 +18,10 @@ dependencies = [
 
 [project.scripts]
 mesmer-segment = "mesmer_segment:app"
+mesmer-postprocess = "mesmer_segment.cli:postprocess_app"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
