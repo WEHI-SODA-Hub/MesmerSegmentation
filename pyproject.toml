@@ -18,3 +18,4 @@ dependencies = [
 
 [project.scripts]
 mesmer-segment = "mesmer_segment:app"
+mesmer-postprocess = "mesmer_segment.cli:postprocess_app"

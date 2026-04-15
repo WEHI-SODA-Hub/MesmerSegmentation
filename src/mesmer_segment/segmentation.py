@@ -1,6 +1,7 @@
 """
 Segmentation logic: channel manipulation and Mesmer prediction.
 """
+import sys
 from enum import Enum
 
 import numpy as np
@@ -111,6 +112,37 @@ def calculate_maxima_threshold(segmentation_level: int) -> float:
     return 0.1 - 0.1 * subtractive_factor
 
 
+def fix_mask_orientation(
+    mask: NDArray,
+    expected_shape: tuple[int, int],
+    force_transpose: bool = False,
+) -> NDArray:
+    """
+    Detect and correct transposed X/Y dimensions in a Mesmer output mask.
+
+    Mesmer can produce masks with swapped X,Y axes. This compares the mask
+    shape against `expected_shape` (spatial dims of the input image after any
+    padding) and transposes if they are the reverse of each other.
+
+    `force_transpose` always transposes regardless of the shape check, which
+    is useful when the spatial orientation is visibly wrong but the shapes
+    happen to be equal (e.g. a square image).
+    """
+    if force_transpose:
+        print(
+            f"Force-transposing mask from {mask.shape} to {mask.T.shape}",
+            file=sys.stderr,
+        )
+        return mask.T
+    if mask.shape != expected_shape and mask.shape == expected_shape[::-1]:
+        print(
+            f"Transposing mask from {mask.shape} to {expected_shape}",
+            file=sys.stderr,
+        )
+        return mask.T
+    return mask
+
+
 def get_segmentation_predictions(
     seg_array: np.ndarray,
     mpp: float,
@@ -130,4 +162,4 @@ def get_segmentation_predictions(
         compartment=compartment,
         postprocess_kwargs_nuclear=kwargs_nuclear,
         postprocess_kwargs_whole_cell=kwargs_whole_cell,
-    ).squeeze().astype("uint32")
+    ).squeeze().astype("uint32")  # type: ignore

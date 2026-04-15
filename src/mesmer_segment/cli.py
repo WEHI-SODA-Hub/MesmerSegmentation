@@ -16,6 +16,7 @@ from mesmer_segment.segmentation import (
     calculate_maxima_threshold,
     combine_channels,
     extract_channels,
+    fix_mask_orientation,
     get_segmentation_predictions,
 )
 
@@ -79,6 +80,10 @@ def main(
         help="Number of pixels to crop the image by before segmentation.",
         min=0)
     ] = 0,
+    force_transpose: Annotated[bool, typer.Option(
+        help="Always transpose the output mask, regardless of shape check. "
+             "Useful when the mask spatial orientation is visibly flipped.")
+    ] = False,
 ):
     full_array = tiff_to_xarray(tiff)
 
@@ -127,4 +132,48 @@ def main(
     if remove_cells_touching_border:
         segmentation_predictions = clear_border(segmentation_predictions)
 
+    # seg_array has shape (batch, X, Y, C); spatial dims are [1] and [2]
+    expected_shape = (seg_array.shape[1], seg_array.shape[2])
+    segmentation_predictions = fix_mask_orientation(
+        segmentation_predictions, expected_shape, force_transpose
+    )
+
     imwrite(sys.stdout.buffer, segmentation_predictions)
+
+
+# ---------------------------------------------------------------------------
+# Standalone postprocess entry point (for fixing already-written mask files)
+# ---------------------------------------------------------------------------
+
+postprocess_app = typer.Typer(rich_markup_mode="markdown")
+
+
+@postprocess_app.command(
+    help="Fix transposed X/Y dimensions in an existing Mesmer output mask. "
+         "The original input TIFF is used to determine the expected spatial shape."
+)
+def postprocess(
+    input_tiff: Annotated[Path, typer.Argument(
+        help="Original input TIFF used during segmentation."
+    )],
+    mask_path: Annotated[Path, typer.Argument(
+        help="Mesmer output mask TIFF to post-process (edited in-place)."
+    )],
+    force_transpose: Annotated[bool, typer.Option(
+        help="Always transpose the mask, regardless of shape check.")
+    ] = False,
+):
+    import tifffile as _tifffile
+    from mesmer_segment.segmentation import fix_mask_orientation as _fix
+
+    input_img = _tifffile.imread(input_tiff)
+    expected_shape: tuple[int, int] = (
+        input_img.shape[1], input_img.shape[2]
+    ) if input_img.ndim == 3 else (input_img.shape[0], input_img.shape[1])
+
+    mask = _tifffile.imread(mask_path)
+    fixed = _fix(mask, expected_shape, force_transpose)
+    if fixed is not mask:
+        _tifffile.imwrite(mask_path, fixed, compression="deflate")
+    else:
+        print(f"Mask dimensions correct: {mask.shape}", file=sys.stderr)

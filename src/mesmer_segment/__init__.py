@@ -1,1 +1,1 @@
-from mesmer_segment.cli import app
+from mesmer_segment.cli import app as app
