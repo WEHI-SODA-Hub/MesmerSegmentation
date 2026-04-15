@@ -27,4 +27,4 @@ jobs:
 
     - name: Run pytest
       run: |
-        docker run --rm mesmer-segment-test:latest pytest
+        docker run --rm -w /app mesmer-segment-test:latest pytest
