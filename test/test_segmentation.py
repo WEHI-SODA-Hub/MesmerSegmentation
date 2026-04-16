@@ -115,6 +115,34 @@ class TestExtractChannels:
         arr = extract_channels(two_channel_array_nonsquare, "nuclear", "membrane")
         assert arr.shape == (1, 20, 30, 2)
 
+    def test_missing_channel_raises_clear_error(self, two_channel_array):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"Requested channel\(s\) not found: missing\. "
+                r"Available channels: nuclear, membrane"
+            ),
+        ):
+            extract_channels(two_channel_array, "missing", "membrane")
+
+
+class TestCombineChannelsErrors:
+
+    def test_missing_channel_raises_clear_error(self, two_channel_array):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"Requested channel\(s\) not found: missing\. "
+                r"Available channels: nuclear, membrane"
+            ),
+        ):
+            combine_channels(
+                two_channel_array,
+                ["nuclear", "missing"],
+                "combined",
+                CombineMethod.MAX,
+            )
+
 
 # ---------------------------------------------------------------------------
 # calculate_maxima_threshold

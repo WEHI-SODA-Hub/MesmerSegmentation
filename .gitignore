@@ -4,3 +4,12 @@ __pycache__/
 dist/
 build/
 *.egg
+
+# Test outputs
+test/*.tiff
+test_files/
+notebooks/
+*.out
+
+# MacOS
+.DS_Store

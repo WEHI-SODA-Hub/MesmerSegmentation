@@ -29,6 +29,20 @@ class Compartment(str, Enum):
     NUCLEAR = "nuclear"
 
 
+def _ensure_channels_exist(array: DataArray, channels: list[str]) -> None:
+    """Raise a clear error when requested channel names are missing."""
+    available_channels = [str(channel) for channel in array.coords["C"].values]
+    missing_channels = [
+        channel for channel in channels if channel not in available_channels
+    ]
+    if missing_channels:
+        raise ValueError(
+            "Requested channel(s) not found: "
+            f"{', '.join(missing_channels)}. "
+            f"Available channels: {', '.join(available_channels)}"
+        )
+
+
 def combine_channels(
     array: DataArray,
     channels: list[str],
@@ -41,6 +55,8 @@ def combine_channels(
     """
     if len(channels) == 1:
         return array
+
+    _ensure_channels_exist(array, channels)
 
     selected_data = array.sel(C=channels).values
 
@@ -83,6 +99,8 @@ def extract_channels(
     as a 4D numpy array (batch, Y, X, C) ready for Mesmer. Optionally crops
     by `padding` pixels on each side.
     """
+    _ensure_channels_exist(array, [nuclear_channel, membrane_channel])
+
     seg_array = (
         array.sel(C=[nuclear_channel, membrane_channel])
         .expand_dims("batch")
